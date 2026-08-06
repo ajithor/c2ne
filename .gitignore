@@ -1,0 +1,17 @@
+# compiled binaries
+client
+server
+*.exe
+
+#tls certificates
+server.key
+server.crt
+
+#current readme
+readme.sofar.md
+
+#practice scripts
+practice/
+
+#other song files
+river_ship.wav
