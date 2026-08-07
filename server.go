@@ -95,12 +95,14 @@ func invokeTlsListener(ctx context.Context, port string){
 			// 64 is for testing -> should give 8 bits of encoding (1 byte) 
 			//576 Provides a precise 2ms network loop cadence
 			//need to decide if we wanna encode on header or not, if not so and need a way to determine if the chunk is, infact header
-			ChunkSize := 576 
+			ChunkSize := 576
+			cmd_len_threshold := ChunkSize/8
 			byteOffset := 0
 			loopCounter :=0
 			totalTrackBytes := len(baseAudioTrack)
 			chunk := make([]byte, ChunkSize)
-			//cmd:= ""
+			command :=""
+			pendingCommand :=""
 			for { //loopCounter<1 { //loop over baseAudioTrack, 1 ChunkSize at a time
 				//fmt.Println("Debug info - loopCounter = ", loopCounter, " totalTrackBytes = ", totalTrackBytes," byteOffset = ", byteOffset)
 				
@@ -117,22 +119,39 @@ func invokeTlsListener(ctx context.Context, port string){
 
 				//*********--encode message in the current chunk--******************//
 				//---code for byte to bit conversion
-				cmd:= ""
 				
 				select {
-				case msg := <-cliMessageChan:
-					if len(msg) > 0 {
-						cmd = msg
-						fmt.Printf("[Server Steg] Injecting covert payload (%d characters)...\n", len(msg))
+				case cmd := <-cliMessageChan:
+					command = cmd
+					if len(command) > 0 {
+						command = "STRT"+command+"STOP"
 					}
+					
+					//testing with 12 chars limit, but limit should be derieved from chunksize.
+					if len(pendingCommand)>0{
+						command = pendingCommand[:min(len(pendingCommand), cmd_len_threshold)]+command
+						pendingCommand = pendingCommand[min(len(pendingCommand), cmd_len_threshold):]
+					}
+					if len(command)>cmd_len_threshold{
+						pendingCommand += command[cmd_len_threshold:]
+						command = command[:cmd_len_threshold]
+					}
+
 				default:
+					if len(pendingCommand)>0{
+						command = pendingCommand[:min(len(pendingCommand), cmd_len_threshold)]+command
+						pendingCommand = pendingCommand[min(len(pendingCommand), cmd_len_threshold):]					
+						//fmt.Printf("Injecting payload (%d characters)...\n", len(command)+8)
+						goto label1
+						//ensures when there's no cli message, but there's pending msg, pending msg gets set
+					}
+
 					//dont go through the whole thing of encoding, if we dont have any message to be sent.
 					c.Write(chunk)
 					byteOffset = byteOffset + ChunkSize;
 					continue
 				}
-
-				command := "STRT"+cmd+"STOP"
+label1 :
 				var cmd_bitstring []string 
 
 				for _, char := range command{
@@ -146,7 +165,8 @@ func invokeTlsListener(ctx context.Context, port string){
 				var audio_stegd_bytes []byte
 
 				fmt.Println("Chunk length = ", len(chunk))
-				if len(chunk) < len(command)*8{ fmt.Println("Need bigger chunks"); return}
+				fmt.Printf("Injecting payload (%d characters)...\n", len(command))
+				//if len(chunk) < len(command)*8{ fmt.Println("Need bigger chunks"); return}
 
 				for _, aud_byte := range chunk{
 					if cmd_charIndex == len(command) {
@@ -173,7 +193,7 @@ func invokeTlsListener(ctx context.Context, port string){
 				copy(chunk[:cmd_charIndex*8], audio_stegd_bytes[:cmd_charIndex*8])
 				c.Write(chunk)
 				byteOffset = byteOffset + ChunkSize
-				cmd = ""
+				command = ""
 			}//for loop, looping over audioTrack, one chunkSize at a time.
 
 			fmt.Println("Log - ",time.Now()," Request recieved and Replied to ", port)

