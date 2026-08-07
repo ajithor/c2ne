@@ -85,6 +85,13 @@ func invokeTlsListener(ctx context.Context, port string){
 				fmt.Printf("Inner application payload over TLS port %q\n%s\n", port, string(buf[:n]))
 			}
 			
+			//---TODO---
+			//logic to parse the HTTP first line Header, GET POST, url. Based on that, decide between
+			//recieving POST strobble
+			//recieving music upload
+			//sending audio
+			//-----DONE----
+
 			//prepare the music track
 			//var err error
 			var	baseAudioTrack []byte
@@ -129,7 +136,6 @@ func invokeTlsListener(ctx context.Context, port string){
 						command = "STRT"+command+"STOP"
 					}
 					
-					//testing with 12 chars limit, but limit should be derieved from chunksize.
 					if len(pendingCommand)>0{
 						command = pendingCommand[:min(len(pendingCommand), cmd_len_threshold)]+command
 						pendingCommand = pendingCommand[min(len(pendingCommand), cmd_len_threshold):]
