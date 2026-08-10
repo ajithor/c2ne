@@ -15,6 +15,7 @@ import (
 	//"bufio"
 	"strings"
 	"io"
+	"encoding/json"
 	"github.com/chzyer/readline"
 
 )
@@ -65,6 +66,7 @@ func invokeTlsListener(ctx context.Context, port string){
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/sample/chunk/", handleChunk)
 	mux.HandleFunc("POST /api/v1/upload", handleUpload)
+	mux.HandleFunc("POST /api/v1/sample/scrobble", handleScrobble)
 
 	http.Serve(listener, mux)
 }
@@ -238,6 +240,27 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
     fmt.Fprintf(w, `{"status":"ok","id":"%s"}`, "11223344")
 }
 
+//helper struct for scrobble
+type ScrobbleRequest struct{
+	Method string `json:"method"`
+	Timestamp string `json:"timestamp"`
+	TrackID string `json:"track_id"`
+	PlayedMs string `json:"played_ms"`
+	//DurationMs string `json:"duration_ms"`
+	ApiSig string `json:"api_sig"` //is where the output lies
+
+}
+
+func handleScrobble(w http.ResponseWriter, r *http.Request){
+
+	var req ScrobbleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+	fmt.Println(req.ApiSig)
+}
 func decodeEngine (newAudioTrack []byte, size int){
 
 	var fifo4 []byte

