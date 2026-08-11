@@ -27,7 +27,7 @@ var key []byte = []byte{
     0x09, 0xcf, 0x4f, 0x3c,
 }
 const c2_server_ip = "0.0.0.0"
-var firstLoopDone string = "true"
+var firstLoopDone string = "false"
 var (
 	echo_to_stdout string
 	cliMessageChan = make(chan string, 10)
