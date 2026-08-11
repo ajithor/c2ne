@@ -1,5 +1,5 @@
 # c2ne
-A covert command-and-control POC framework, that enclosed operator commands into the LSB of a live audio stream, making C2 traffic indistiguishable from routine music streaming.
+A covert command-and-control POC framework, that encloses operator commands into the LSB of a live audio stream, making C2 traffic indistiguishable from routine music streaming.
 
 > **Educational / Research Use Only.** This tool is intended for authorised red team engagements, CTF competitions, and security research in controlled environments. Do not use against systems you do not have explicit written permission to test.
 
