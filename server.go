@@ -120,7 +120,7 @@ func handleChunk (w http.ResponseWriter, r *http.Request){
 	if byteOffset+ChunkSize > totalTrackBytes {
 		num =copy(chunk, baseAudioTrack[byteOffset:totalTrackBytes])
 		isLastChunk="true"
-		firstLoopDone="false"
+		firstLoopDone="true"
 	}else{
 		num =copy(chunk, baseAudioTrack[byteOffset:byteOffset+ChunkSize])
 	}
