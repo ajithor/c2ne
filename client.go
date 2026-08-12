@@ -20,8 +20,6 @@ import (
 	"mime/multipart"
 	"encoding/json"
 	utls "github.com/refraction-networking/utls"
-	"runtime/pprof"
-	"os"
 )
 
 type dialResult struct {
