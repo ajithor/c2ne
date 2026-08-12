@@ -4,6 +4,9 @@ A covert command-and-control POC framework, that encloses operator commands into
 > **Educational / Research Use Only.** This tool is intended for authorised red team engagements, CTF competitions, and security research in controlled environments. Do not use against systems you do not have explicit written permission to test.
 
 ## Setup
+<img width="558" height="370" alt="setupc2nef" src="https://github.com/user-attachments/assets/61374d36-e287-40b1-a6c7-926313fd8475" />
+<img width="892" height="318" alt="runc2neproof" src="https://github.com/user-attachments/assets/bca2f1b4-15ea-41a3-8719-12d9c12835ab" />
+
 ```sh
 openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -sha256 -days 365 -nodes -subj "/CN=c2ne.local"
 #edit the config file
