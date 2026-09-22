@@ -51,14 +51,14 @@ command string --> AES-GCM encrypt --> "STRT"+command+"STOP" --> convert each ch
 -->Modified song bytes streamed in chunks to client
 ### Command Decoding
 Incoming song bytes --> check for first 4 bytes of each chunk for "STRT". If it doesnt exist, move on to next chunk.
-If it exists -> extract LSB of each byte -> append to bit buffer --> every 8 bits assembled to byte -> cast to char till you see "STOP"--> AES-GMC decrypt.
+If it exists -> extract LSB of each byte -> append to bit buffer --> every 8 bits assembled to byte -> cast to char till you see "STOP"--> AES-GCM decrypt.
 
 Response encoding/decoding follows the approach as commands, in reverse order. If `length(output)<threshold` send response via scrobble POST (`/api/v1/{song}/scrobble`.
 Otherwise, send output via Audio file upload (`/api/v1/upload`)
 
 ---
 ## Traffic Evasion
-### TSL fingerprint
+### TLS fingerprint
 Both client and server use `uTLS` with `HelloChrome_Auto`. The ClientHello calues (cipher suites, extensions, elliptic curves) are identical to a real Chrome browzer session.
 ### HTTP headers
 Headers are handcrafted on both sides, to mirror Chrome's exact field names, values, and ordering
