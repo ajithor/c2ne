@@ -2,9 +2,9 @@ name: trivy-sca
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "master" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "master" ]
   schedule:
     # Weekly scan so newly disclosed CVEs in your dependencies get caught
     # even if go.mod hasn't changed
