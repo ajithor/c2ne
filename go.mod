@@ -1,4 +1,4 @@
-module practice
+module c2ne
 
 go 1.24.13
 

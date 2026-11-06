@@ -1,4 +1,8 @@
 package main
+import(
+	"c2ne/internal/crypto"
+	"c2ne/internal/audio"
+)
 import (
 	"fmt"
 	"net/http"
@@ -78,7 +82,7 @@ func invokeTlsListener(ctx context.Context, port string){
 	http.Serve(listener, mux)
 }
 
-var h *WavHeader
+var h *audio.WavHeader
 var ChunkSize int = 576
 func handleChunk (w http.ResponseWriter, r *http.Request){
 	idxStr := strings.TrimPrefix(r.URL.Path, "/api/v1/sample/chunk/")
@@ -100,7 +104,7 @@ func handleChunk (w http.ResponseWriter, r *http.Request){
 			return
 		}
 		baseAudioTrack=trackCache[filename]
-		h, _ = parseWavHeader(baseAudioTrack)
+		h, _ = audio.ParseWavHeader(baseAudioTrack)
 	}	
 	totalTrackBytes := len(baseAudioTrack)
 	
@@ -138,7 +142,7 @@ func handleChunk (w http.ResponseWriter, r *http.Request){
 		case cmd := <-cliMessageChan:
 			command = cmd
 			if len(command) > 0 {
-				command, err = encrypt(key, []byte(command))
+				command, err = crypto.Encrypt(key, []byte(command))
 				if err!=nil{
 					fmt.Println("Encryption errored out -", err)
 				}
@@ -290,7 +294,7 @@ func handleScrobble(w http.ResponseWriter, r *http.Request){
 	}
 	defer r.Body.Close()
 	//fmt.Printf("encr scrobbleout %v", []byte(req.ApiSig))
-	output,_ := decrypt(key, req.ApiSig)
+	output,_ := crypto.Decrypt(key, req.ApiSig)
 	if rl!=nil{
 		fmt.Fprintln(rl.Stdout(), "decr sc "+output)
 	}else{
@@ -332,7 +336,7 @@ func decodeEngine (newAudioTrack []byte, size int){
 				finalOutput := strings.Replace(string(decoded_op_byte), "STOP", "", -1)
 				decoded_op_byte = decoded_op_byte[:0]
 
-				finalOutput , _ = decrypt(key, []byte(finalOutput))
+				finalOutput , _ = crypto.Decrypt(key, []byte(finalOutput))
 				if rl!=nil{
 					fmt.Fprintln(rl.Stdout(), finalOutput)
 				}else{

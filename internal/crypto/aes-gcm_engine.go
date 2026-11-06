@@ -1,4 +1,4 @@
-package main
+package crypto
 
 import (
     "crypto/aes"
@@ -10,7 +10,7 @@ import (
     "fmt"
 )
 
-func encrypt(key, plaintext []byte) (string, error) {
+func Encrypt(key, plaintext []byte) (string, error) {
     block, err := aes.NewCipher(key)
     if err != nil {
         fmt.Println("aesNewCipher err -", err)
@@ -33,7 +33,7 @@ func encrypt(key, plaintext []byte) (string, error) {
     return string(gcm.Seal(nonce, nonce, plaintext, nil)), nil
 }
 
-func decrypt(key, ciphertext []byte) (string, error) {
+func Decrypt(key, ciphertext []byte) (string, error) {
     block, err := aes.NewCipher(key)
     if err != nil {
         fmt.Println("aesNewCipher 2 err -", err)
